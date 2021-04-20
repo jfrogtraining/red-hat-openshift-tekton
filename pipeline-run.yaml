@@ -1,0 +1,30 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: build-demo-app-run
+spec:
+  pipelineRef:
+    name: npm-docker-rt-pipeline
+  serviceAccountName: 'default'
+  params:
+    - name: rturl
+      value: http://jfrog-http-default.apps.openshift-demo.openshiftk8s.com/artifactory
+    - name: server
+      value: jfrog-https-default.apps.openshift-demo.openshiftk8s.com
+    - name: username
+      value: admin
+    - name: apikey
+      value: xxxx
+    - name: serverid
+      value: openshift-rt-xray-server
+    - name: image
+      value: "jfrog-https-default.apps.openshift-demo.openshiftk8s.com/docker/demo-docker-app"
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi

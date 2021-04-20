@@ -1,0 +1,349 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: git-clone
+spec:
+  description: "GIT clone a repository."
+  workspaces:
+    - name: output
+      description: The git repo will be cloned onto the volume backing this workspace
+  params:
+    - name: url
+      description: git url to clone
+      type: string
+    - name: revision
+      description: git revision to checkout (branch, tag, sha, ref…)
+      type: string
+      default: master
+    - name: submodules
+      description: defines if the resource should initialize and fetch the submodules
+      type: string
+      default: "true"
+    - name: depth
+      description: performs a shallow clone where only the most recent commit(s) will be fetched
+      type: string
+      default: "1"
+    - name: sslVerify
+      description: defines if http.sslVerify should be set to true or false in the global git config
+      type: string
+      default: "true"
+    - name: subdirectory
+      description: subdirectory inside the "output" workspace to clone the git repo into
+      type: string
+      default: ""
+    - name: deleteExisting
+      description: clean out the contents of the repo's destination directory (if it already exists) before trying to clone the repo there
+      type: string
+      default: "false"
+  results:
+    - name: commit
+      description: The precise commit SHA that was fetched by this Task
+  steps:
+    - name: clone
+      image: gcr.io/tekton-releases/github.com/tektoncd/pipeline/cmd/git-init:latest
+      script: |
+        CHECKOUT_DIR="$(workspaces.output.path)/$(params.subdirectory)"
+        cleandir() {
+          # Delete any existing contents of the repo directory if it exists.
+          #
+          # We don't just "rm -rf $CHECKOUT_DIR" because $CHECKOUT_DIR might be "/"
+          # or the root of a mounted volume.
+          if [[ -d "$CHECKOUT_DIR" ]] ; then
+            # Delete non-hidden files and directories
+            rm -rf "$CHECKOUT_DIR"/*
+            # Delete files and directories starting with . but excluding ..
+            rm -rf "$CHECKOUT_DIR"/.[!.]*
+            # Delete files and directories starting with .. plus any other character
+            rm -rf "$CHECKOUT_DIR"/..?*
+          fi
+        }
+        if [[ "$(params.deleteExisting)" == "true" ]] ; then
+          cleandir
+        fi
+        /ko-app/git-init \
+          -url "$(params.url)" \
+          -revision "$(params.revision)" \
+          -path "$CHECKOUT_DIR" \
+          -sslVerify="$(params.sslVerify)" \
+          -submodules="$(params.submodules)" \
+          -depth="$(params.depth)"
+        cd "$CHECKOUT_DIR"
+        RESULT_SHA="$(git rev-parse HEAD | tr -d '\n')"
+        EXIT_CODE="$?"
+        if [ "$EXIT_CODE" != 0 ]
+        then
+          exit $EXIT_CODE
+        fi
+        # Make sure we don't add a trailing newline to the result!
+        echo -n "$RESULT_SHA" > $(results.commit.path)
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: rt-config-task
+spec:
+  description: "Configure the JFrog CLI for the Artifactory server."
+  workspaces:
+    - name: output
+  params:
+    - name: rturl
+      type: string
+    - name: username
+      type: string
+    - name: apikey
+      type: string
+    - name: serverid
+      type: string
+  steps:
+    - name: "jfrog-rt-config"
+      image: docker.io/jefferyfry/jfrog-cli-npm-docker:latest
+      workingDir: "$(workspaces.output.path)"
+      env:
+        - name: JFROG_CLI_HOME_DIR
+          value: "$(workspaces.output.path)"
+        - name: JFROG_CLI_TEMP_DIR
+          value: "$(workspaces.output.path)/tmp"
+      command: ["jfrog"]
+      args: ["rt","config","$(inputs.params.serverid)","--url=$(inputs.params.rturl)","--user=$(inputs.params.username)","--apikey=$(inputs.params.apikey)"]
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: npm-config-task
+spec:
+  description: "Configure the JFrog CLI for the NPM repositories."
+  workspaces:
+    - name: output
+  params:
+    - name: serverid
+      type: string
+  steps:
+    - name: "jfrog-rt-npmc"
+      image: docker.io/jefferyfry/jfrog-cli-npm-docker:latest
+      workingDir: "$(workspaces.output.path)"
+      env:
+        - name: JFROG_CLI_HOME_DIR
+          value: "$(workspaces.output.path)"
+        - name: JFROG_CLI_TEMP_DIR
+          value: "$(workspaces.output.path)/tmp"
+      command: ["jfrog"]
+      args: ["rt","npmc","--repo-resolve=npm", "--repo-deploy=npm","--server-id-resolve=$(inputs.params.serverid)","--server-id-deploy=$(inputs.params.serverid)"]
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: npm-install-task
+spec:
+  description: "Use the JFrog CLI to run NPM install and collect build-info."
+  workspaces:
+    - name: output
+  steps:
+    - name: "jfrog-rt-npm-install"
+      image: docker.io/jefferyfry/jfrog-cli-npm-docker:latest
+      workingDir: "$(workspaces.output.path)"
+      env:
+        - name: JFROG_CLI_HOME_DIR
+          value: "$(workspaces.output.path)"
+        - name: JFROG_CLI_TEMP_DIR
+          value: "$(workspaces.output.path)/tmp"
+      command: ["jfrog"]
+      args: ["rt","npm-install","--build-name=npm_build", "--build-number=1"]
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: npm-publish-task
+spec:
+  description: "Use the JFrog CLI to run NPM publish and collect build-info."
+  workspaces:
+    - name: output
+  steps:
+    - name: "jfrog-rt-npm-publish"
+      image: docker.io/jefferyfry/jfrog-cli-npm-docker:latest
+      workingDir: "$(workspaces.output.path)"
+      env:
+        - name: JFROG_CLI_HOME_DIR
+          value: "$(workspaces.output.path)"
+        - name: JFROG_CLI_TEMP_DIR
+          value: "$(workspaces.output.path)/tmp"
+      command: ["jfrog"]
+      args: ["rt","npm-publish","--build-name=npm_build", "--build-number=1"]
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: build-publish-task
+spec:
+  description: "Use the JFrog CLI to publish the build-info."
+  workspaces:
+    - name: output
+  steps:
+    - name: "jfrog-rt-build-publish"
+      image: docker.io/jefferyfry/jfrog-cli-npm-docker:latest
+      workingDir: "$(workspaces.output.path)"
+      env:
+        - name: JFROG_CLI_HOME_DIR
+          value: "$(workspaces.output.path)"
+        - name: JFROG_CLI_TEMP_DIR
+          value: "$(workspaces.output.path)/tmp"
+      command: ["jfrog"]
+      args: ["rt","build-publish","npm_build", "1"]
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: deploy-image-task
+spec:
+  description: "Deploy the new image."
+  workspaces:
+    - name: output
+  params:
+    - name: image
+      type: string
+    - name: server
+      type: string
+    - name: username
+      type: string
+    - name: apikey
+      type: string
+  steps:
+    - name: "create-secret"
+      image: bitnami/kubectl:latest
+      script: |
+        #!/usr/bin/env bash
+        kubectl create secret docker-registry regcred  --namespace demo --docker-server=$(inputs.params.server)  --docker-username=$(inputs.params.username) --docker-password=$(inputs.params.apikey) || true
+    - name: "deployment-substitution"
+      image: bash:latest
+      workingDir: "$(workspaces.output.path)"
+      script: |
+        #!/usr/bin/env bash
+        sed "s|imageName|$(inputs.params.image)|g" deployment.yaml > my-deployment.yaml
+    - name: "apply-deployment"
+      image: bitnami/kubectl:latest
+      workingDir: "$(workspaces.output.path)"
+      script: |
+        #!/usr/bin/env bash
+        kubectl apply -f my-deployment.yaml --namespace demo
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: npm-docker-rt-pipeline
+spec:
+  description: "This is pipeline to build the demo NPM package, build the Docker image and deploy."
+  params:
+    - name: rturl
+      type: string
+    - name: server
+      type: string
+    - name: username
+      type: string
+    - name: apikey
+      type: string
+    - name: serverid
+      type: string
+    - name: image
+      type: string
+  workspaces:
+    - name: shared-workspace
+  tasks:
+    - name: git-clone
+      taskRef:
+        name: git-clone
+      params:
+        - name: url
+          value: https://github.com/jfrogtraining/red-hat-openshift-tekton
+        - name: revision
+          value: master
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+    - name: rt-config
+      taskRef:
+        name: rt-config-task
+      runAfter:
+        - git-clone
+      params:
+        - name: rturl
+          value: "$(params.rturl)"
+        - name: username
+          value: "$(params.username)"
+        - name: apikey
+          value: "$(params.apikey)"
+        - name: serverid
+          value: "$(params.serverid)"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+    - name: npm-config
+      taskRef:
+        name: npm-config-task
+      runAfter:
+        - rt-config
+      params:
+        - name: serverid
+          value: "$(params.serverid)"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+    - name: npm-install
+      taskRef:
+        name: npm-install-task
+      runAfter:
+        - npm-config
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+    - name: npm-publish
+      taskRef:
+        name: npm-publish-task
+      runAfter:
+        - npm-install
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+    - name: build-publish
+      taskRef:
+        name: build-publish-task
+      runAfter:
+        - npm-publish
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+    - name: build-push-image
+      taskRef:
+        name: buildah
+        kind: ClusterTask
+      runAfter:
+        - build-publish
+      params:
+        - name: DOCKERFILE
+          value: "./Dockerfile"
+        - name: TLSVERIFY
+          value: "false"
+        - name: PUSH_EXTRA_ARGS
+          value: "--creds $(params.username):$(params.apikey)"
+        - name: IMAGE
+          value: "$(params.image)"
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+    - name: deploy-image
+      taskRef:
+        name: deploy-image-task
+      runAfter:
+        - build-push-image
+      params:
+        - name: server
+          value: "$(params.server)"
+        - name: username
+          value: "$(params.username)"
+        - name: apikey
+          value: "$(params.apikey)"
+        - name: image
+          value: "$(params.image)"
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+
+
