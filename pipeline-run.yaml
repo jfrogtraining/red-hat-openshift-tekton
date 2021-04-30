@@ -8,17 +8,17 @@ spec:
   serviceAccountName: 'default'
   params:
     - name: rturl
-      value: http://jfrog-http-default.apps.openshift-demo.openshiftk8s.com/artifactory
+      value: https://swampup-swampup.apps.swampup-red-hat.openshiftk8s.com/artifactory
     - name: server
-      value: jfrog-https-default.apps.openshift-demo.openshiftk8s.com
+      value: swampup-swampup.apps.swampup-red-hat.openshiftk8s.com
     - name: username
       value: admin
     - name: apikey
-      value: xxxx
+      value: AKCp8ii9LdmkGYCGgcoADWNbJuYAfZS4srYwhYd9RwJo1rz3nYWTn9ZvufvHNUrxpZVZ8mDLD
     - name: serverid
-      value: openshift-rt-xray-server
+      value: openshift-rt-server
     - name: image
-      value: "jfrog-https-default.apps.openshift-demo.openshiftk8s.com/docker/demo-docker-app"
+      value: "swampup-swampup.apps.swampup-red-hat.openshiftk8s.com/swampup-docker/demo-docker-app"
   workspaces:
     - name: shared-workspace
       volumeClaimTemplate:
