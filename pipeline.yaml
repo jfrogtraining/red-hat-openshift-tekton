@@ -127,7 +127,7 @@ spec:
         - name: JFROG_CLI_TEMP_DIR
           value: "$(workspaces.output.path)/tmp"
       command: ["jfrog"]
-      args: ["rt","npmc","--repo-resolve=npm", "--repo-deploy=npm","--server-id-resolve=$(inputs.params.serverid)","--server-id-deploy=$(inputs.params.serverid)"]
+      args: ["rt","npmc","--repo-resolve=swampup-npm","--repo-deploy=swampup-npm","--server-id-resolve=$(inputs.params.serverid)","--server-id-deploy=$(inputs.params.serverid)"]
 ---
 apiVersion: tekton.dev/v1beta1
 kind: Task
